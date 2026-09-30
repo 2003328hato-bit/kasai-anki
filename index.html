@@ -81,7 +81,7 @@
     <section>
       <div class="row">
         <button onclick="downloadBackup()">バックアップを保存</button>
-        <label for="backupFile"><button type="button">バックアップを復元</button></label>
+        <button type="button" onclick="document.getElementById('backupFile').click()">バックアップを復元</button>
         <input id="backupFile" type="file" accept=".json" onchange="restoreBackup(event)">
         <button onclick="signOut()">ログアウト</button>
       </div>
@@ -99,7 +99,8 @@
       <h3>単元から選ぶ</h3>
       <div id="unitMenu" class="unit-grid"></div>
       <div class="row">
-        <label for="csvFile"><button type="button">ExcelのCSVを読み込む</button></label>
+        
+        <button type="button" onclick="document.getElementById('csvFile').click()">ExcelのCSVを読み込む</button>
         <input id="csvFile" type="file" accept=".csv,text/csv" onchange="importCsv(event)">
       </div>
       <p class="help">CSVはA列＝問題、B列＝○か×、C列＝解説、D列＝単元です。読み込むと問題一覧が置き換わります。</p>
