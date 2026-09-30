@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>かさいさんのための暗記帳</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 900px;
+      margin: 24px auto;
+      padding: 0 16px;
+      line-height: 1.65;
+      color: #222;
+      background: #f5f7fa;
+    }
+
+    h1 { text-align: center; }
+    h2 { margin-top: 0; }
+
+    section, .card {
+      background: white;
+      padding: 22px;
+      margin: 16px 0;
+      border-radius: 14px;
+      box-shadow: 0 2px 12px #00000015;
+    }
+
+    button, input {
+      font: inherit;
+      padding: 10px 13px;
+      margin: 4px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+
+    button { cursor: pointer; background: #eee; }
+    button:hover { filter: brightness(.95); }
+    button:disabled { opacity: .5; }
+
+    .primary { color: white; background: #2563eb; border: 0; }
+    .green { color: white; background: #198754; border: 0; }
+    .orange { color: white; background: #d97706; border: 0; }
+    .purple { color: white; background: #6b4eff; border: 0; }
+
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .unit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .unit-card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+    .unit-card strong { display: block; font-size: 18px; }
+    .question { font-size: 23px; }
+    .status, .feedback { padding: 12px; margin-top: 12px; border-radius: 8px; text-align: center; font-weight: bold; }
+    .known, .correct { background: #e5f7e9; color: #176b2c; }
+    .unknown, .incorrect { background: #fff0e8; color: #9b3c12; }
+    .unmarked { background: #eee; color: #555; }
+    .answer { background: #eef6ff; padding: 12px; margin-top: 12px; border-radius: 8px; }
+    .explanation { background: #fff8d8; padding: 12px; margin-top: 12px; border-radius: 8px; }
+    .list-item, .result-item { border-top: 1px solid #ddd; padding: 14px 0; }
+    .help, #message { color: #555; font-size: 14px; }
+    #message { padding: 10px; background: #fff8d8; border-radius: 8px; }
+    #csvFile, #backupFile { display: none; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>かさいさんのための暗記帳</h1>
+  <div id="message">Firebaseに接続しています…</div>
+
+  <section id="loginScreen" hidden>
+    <h2>ログイン</h2>
+    <p>PCとiPhoneで同じメールアドレスとパスワードを使ってください。</p>
+    <input id="email" type="email" placeholder="メールアドレス">
+    <input id="password" type="password" placeholder="パスワード">
+    <div class="row">
+      <button class="primary" onclick="signIn()">ログイン</button>
+      <button onclick="signUp()">新しいアカウントを作成</button>
+      <button onclick="resetPassword()">パスワードを再設定</button>
+    </div>
+  </section>
+
+  <main id="appScreen" hidden>
+    <section>
+      <div class="row">
+        <button onclick="downloadBackup()">バックアップを保存</button>
+        <label for="backupFile"><button type="button">バックアップを復元</button></label>
+        <input id="backupFile" type="file" accept=".json" onchange="restoreBackup(event)">
+        <button onclick="signOut()">ログアウト</button>
+      </div>
+      <p id="accountInfo"></p>
+      <p class="help">バックアップファイルも定期的に保存してください。</p>
+    </section>
+
+    <section id="menuScreen">
+      <h2>メニュー</h2>
+      <div class="row">
+        <button class="primary" onclick="startGlobalRandom20()">すべての問題からランダムで20問</button>
+        <button class="orange" onclick="startGlobalUnknown20()">覚えていない問題からランダムで20問</button>
+        <button onclick="openList(null)">すべての問題を見る</button>
+      </div>
+      <h3>単元から選ぶ</h3>
+      <div id="unitMenu" class="unit-grid"></div>
+      <div class="row">
+        <label for="csvFile"><button type="button">ExcelのCSVを読み込む</button></label>
+        <input id="csvFile" type="file" accept=".csv,text/csv" onchange="importCsv(event)">
+      </div>
+      <p class="help">CSVはA列＝問題、B列＝○か×、C列＝解説、D列＝単元です。読み込むと問題一覧が置き換わります。</p>
+    </section>
+
+    <section id="listScreen" hidden>
+      <h2 id="listTitle"></h2>
+      <div class="row">
+        <button class="primary" onclick="startAll()">この一覧のすべての問題を解く</button>
+      </div>
+      <div id="problemList"></div>
+      <button onclick="showMenu()">メニューへ戻る</button>
+    </section>
+
+    <section id="quizScreen" hidden>
+      <div class="card">
+        <strong>問題</strong>
+        <p class="question" id="question"></p>
+        <div class="row">
+          <button class="green choice" onclick="answer('○')">○</button>
+          <button class="orange choice" onclick="answer('×')">×</button>
+        </div>
+        <div id="feedback" class="feedback" hidden></div>
+        <div id="answerArea" class="answer" hidden></div>
+        <div id="explanationArea" class="explanation" hidden></div>
+        <div id="status" class="status unmarked"></div>
+      </div>
+      <button id="nextButton" class="primary" onclick="nextQuestion()" hidden>次の問題へ</button>
+      <button onclick="showMenu()">メニューへ戻る</button>
+    </section>
+
+    <section id="resultScreen" hidden>
+      <h2>結果</h2>
+      <div id="resultSummary"></div>
+      <p>各問題の学習状態を選んでください。</p>
+      <div id="resultList"></div>
+      <button class="primary" onclick="showMenu()">メニューへ戻る</button>
+    </section>
+  </main>
+
+  <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // FirebaseのWebアプリ設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyAVDwrRrxWPX7DXWXNU0g6ZttAnlkyEKOY",
+      authDomain: "kasainoannki.firebaseapp.com",
+      projectId: "kasainoannki",
+      storageBucket: "kasainoannki.firebasestorage.app",
+      messagingSenderId: "334514888832",
+      appId: "1:334514888832:web:7927f939c330be6ba64665"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    let currentUser = null;
+    let questions = readLocal("nougakkuQuestions", []);
+    let progress = readLocal("nougakkuProgress", {});
+    let selectedUnit = null;
+    let currentIndex = 0;
+    let session = null;
+
+    function readLocal(key, fallback) {
+      try {
+        return JSON.parse(localStorage.getItem(key)) || fallback;
+      } catch {
+        return fallback;
+      }
+    }
+
+    function saveLocal() {
+      localStorage.setItem("nougakkuQuestions", JSON.stringify(questions));
+      localStorage.setItem("nougakkuProgress", JSON.stringify(progress));
+    }
+
+    function userCollection(name) {
+      return db.collection("users").doc(currentUser.uid).collection(name);
+    }
+
+    function showMessage(text) {
+      document.getElementById("message").textContent = text;
+    }
+
+    async function signUp() {
+      try {
+        await auth.createUserWithEmailAndPassword(
+          document.getElementById("email").value.trim(),
+          document.getElementById("password").value
+        );
+      } catch (error) {
+        alert("アカウントを作成できませんでした: " + error.message);
+      }
+    }
+
+    async function signIn() {
+      try {
+        await auth.signInWithEmailAndPassword(
+          document.getElementById("email").value.trim(),
+          document.getElementById("password").value
+        );
+      } catch (error) {
+        alert("ログインできませんでした。メールアドレスとパスワードを確認してください。");
+      }
+    }
+
+    async function resetPassword() {
+      const email = document.getElementById("email").value.trim();
+      if (!email) {
+        alert("先にメールアドレスを入力してください。");
+        return;
+      }
+      try {
+        await auth.sendPasswordResetEmail(email);
+        alert("パスワード再設定メールを送りました。");
+      } catch (error) {
+        alert("メールを送れませんでした: " + error.message);
+      }
+    }
+
+    async function signOut() {
+      await auth.signOut();
+    }
+
+    auth.onAuthStateChanged(async user => {
+      currentUser = user;
+      document.getElementById("loginScreen").hidden = !!user;
+      document.getElementById("appScreen").hidden = !user;
+
+      if (!user) {
+        showMessage("ログインすると暗記帳を使えます。");
+        return;
+      }
+
+      document.getElementById("accountInfo").textContent =
+        "ログイン中：" + user.email;
+      showMessage("クラウドの問題と学習記録を読み込んでいます…");
+
+      try {
+        await loadCloudData();
+        renderUnits();
+        showMessage("同期済みです。");
+      } catch (error) {
+        showMessage("クラウドを読み込めませんでした。Firestoreルールと接続設定を確認してください。");
+      }
+    });
+
+    async function loadCloudData() {
+      const qSnap = await userCollection("questions").get();
+      const pSnap = await userCollection("progress").get();
+
+      if (qSnap.empty && questions.length > 0) {
+        const moveLocal = confirm(
+          "このFirebaseアカウントには問題がありません。この端末にある問題をクラウドへ移しますか？"
+        );
+        if (moveLocal) {
+          await replaceCloudQuestions(questions);
+          for (const [id, status] of Object.entries(progress)) {
+            await userCollection("progress").doc(id).set({ status });
+          }
+          return;
+        }
+      }
+
+      if (!qSnap.empty) {
+        questions = qSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+      }
+
+      progress = {};
+      pSnap.docs.forEach(doc => {
+        progress[doc.id] = doc.data().status;
+      });
+      saveLocal();
+    }
+
+    async function replaceCloudQuestions(items) {
+      const collection = userCollection("questions");
+      const old = await collection.get();
+
+      for (let i = 0; i < old.docs.length; i += 400) {
+        const batch = db.batch();
+        old.docs.slice(i, i + 400).forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+      }
+
+      for (let i = 0; i < items.length; i += 400) {
+        const batch = db.batch();
+        items.slice(i, i + 400).forEach(item => {
+          const id = item.id || ("q-" + Date.now() + "-" + i);
+          batch.set(collection.doc(id), { ...item, id });
+        });
+        await batch.commit();
+      }
+    }
+
+    function getUnit(item) {
+      return item.unit && item.unit.trim() ? item.unit.trim() : "未分類";
+    }
+
+    function showScreen(name) {
+      for (const id of ["menuScreen", "listScreen", "quizScreen", "resultScreen"]) {
+        document.getElementById(id).hidden = id !== name;
+      }
+    }
+
+    function showMenu() {
+      showScreen("menuScreen");
+      renderUnits();
+    }
+
+    function renderUnits() {
+      const root = document.getElementById("unitMenu");
+      root.replaceChildren();
+      const units = [...new Set(questions.map(getUnit))].sort();
+
+      if (!units.length) {
+        root.textContent = "問題がありません。CSVを読み込んでください。";
+        return;
+      }
+
+      units.forEach(unit => {
+        const card = document.createElement("div");
+        card.className = "unit-card";
+        const count = questions.filter(q => getUnit(q) === unit).length;
+        card.innerHTML = "<strong></strong><span></span><div class='row'></div>";
+        card.querySelector("strong").textContent = unit;
+        card.querySelector("span").textContent = count + "問";
+
+        const listBtn = document.createElement("button");
+        listBtn.textContent = "問題一覧";
+        listBtn.onclick = () => openList(unit);
+
+        const randomBtn = document.createElement("button");
+        randomBtn.className = "purple";
+        randomBtn.textContent = "ランダムで解く";
+        randomBtn.onclick = () => startRandom(unit);
+
+        const unknownBtn = document.createElement("button");
+        unknownBtn.className = "orange";
+        unknownBtn.textContent = "覚えていない問題を解く";
+        unknownBtn.onclick = () => startUnknown(unit);
+
+        card.querySelector(".row").append(listBtn, randomBtn, unknownBtn);
+        root.appendChild(card);
+      });
+    }
+
+    function openList(unit) {
+      selectedUnit = unit;
+      document.getElementById("listTitle").textContent =
+        unit ? unit + "の問題一覧" : "すべての問題一覧";
+      renderList();
+      showScreen("listScreen");
+    }
+
+    function matchingIndexes(unit) {
+      return questions.map((_, i) => i).filter(i =>
+        unit === null || getUnit(questions[i]) === unit
+      );
+    }
+
+    function renderList() {
+      const root = document.getElementById("problemList");
+      root.replaceChildren();
+
+      matchingIndexes(selectedUnit).forEach(index => {
+        const item = questions[index];
+        const row = document.createElement("div");
+        row.className = "list-item";
+        const p = document.createElement("p");
+        p.textContent = item.question;
+        const status = progress[item.id] === "known"
+          ? "覚えた"
+          : progress[item.id] === "unknown"
+            ? "まだ覚えていない"
+            : "未記録";
+        const label = document.createElement("span");
+        label.textContent = getUnit(item) + "・" + status + " ";
+        const btn = document.createElement("button");
+        btn.textContent = "この問題を解く";
+        btn.onclick = () => begin([index]);
+        row.append(p, label, btn);
+        root.appendChild(row);
+      });
+    }
+
+    function shuffle(items) {
+      const a = [...items];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function begin(indexes, limit) {
+      let selected = shuffle(indexes);
+      if (limit) selected = selected.slice(0, limit);
+      if (!selected.length) {
+        alert("条件に合う問題がありません。");
+        return;
+      }
+      session = { indexes: selected, position: 0, results: [] };
+      currentIndex = selected[0];
+      showScreen("quizScreen");
+      renderQuestion();
+    }
+
+    function startRandom(unit) {
+      begin(matchingIndexes(unit));
+    }
+
+    function startUnknown(unit) {
+      begin(matchingIndexes(unit).filter(i =>
+        progress[questions[i].id] === "unknown"
+      ));
+    }
+
+    function startAll() {
+      const indexes = matchingIndexes(selectedUnit);
+      session = { indexes, position: 0, results: [] };
+      currentIndex = indexes[0];
+      showScreen("quizScreen");
+      renderQuestion();
+    }
+
+    function startGlobalRandom20() {
+      begin(questions.map((_, i) => i), 20);
+    }
+
+    function startGlobalUnknown20() {
+      begin(
+        questions.map((q, i) => ({ q, i }))
+          .filter(x => progress[x.q.id] === "unknown")
+          .map(x => x.i),
+        20
+      );
+    }
+
+    function renderQuestion() {
+      currentIndex = session.indexes[session.position];
+      const q = questions[currentIndex];
+      document.getElementById("question").textContent = q.question;
+      document.getElementById("feedback").hidden = true;
+      document.getElementById("answerArea").hidden = true;
+      document.getElementById("explanationArea").hidden = true;
+      document.getElementById("nextButton").hidden = true;
+      document.querySelectorAll(".choice").forEach(b => b.disabled = false);
+
+      const status = progress[q.id];
+      const box = document.getElementById("status");
+      box.textContent = status === "known"
+        ? "学習状態：覚えた"
+        : status === "unknown"
+          ? "学習状態：まだ覚えていない"
+          : "学習状態：まだ記録していません";
+      box.className = "status " +
+        (status === "known" ? "known" : status === "unknown" ? "unknown" : "unmarked");
+    }
+
+    function normalizeAnswer(value) {
+      const v = String(value || "").trim().toUpperCase();
+      if (["○", "〇", "◯", "O", "正しい"].includes(v)) return "○";
+      if (["×", "✕", "✖", "X", "誤り"].includes(v)) return "×";
+      return null;
+    }
+
+    async function answer(choice) {
+      const q = questions[currentIndex];
+      const correct = normalizeAnswer(q.answer);
+      if (!correct) {
+        alert("この問題の答えが○×ではありません。CSVを確認してください。");
+        return;
+      }
+
+      const ok = choice === correct;
+      const feedback = document.getElementById("feedback");
+      feedback.textContent = ok ? "正解！" : "不正解";
+      feedback.className = "feedback " + (ok ? "correct" : "incorrect");
+      feedback.hidden = false;
+
+      document.getElementById("answerArea").textContent = "正解：" + correct;
+      document.getElementById("answerArea").hidden = false;
+      document.getElementById("explanationArea").textContent =
+        "解説：" + (q.explanation || "解説は登録されていません。");
+      document.getElementById("explanationArea").hidden = false;
+
+      session.results[session.position] = {
+        id: q.id, question: q.question, chosen: choice,
+        correct: correct, ok: ok, explanation: q.explanation || ""
+      };
+
+      document.querySelectorAll(".choice").forEach(b => b.disabled = true);
+      const next = document.getElementById("nextButton");
+      next.hidden = false;
+      next.textContent = session.position === session.indexes.length - 1
+        ? "結果を見る"
+        : "次の問題へ";
+    }
+
+    function nextQuestion() {
+      if (session.position + 1 < session.indexes.length) {
+        session.position++;
+        renderQuestion();
+      } else {
+        showResults();
+      }
+    }
+
+    async function setStatus(id, status) {
+      progress[id] = status;
+      localStorage.setItem("nougakkuProgress", JSON.stringify(progress));
+      renderResults();
+      renderUnits();
+
+      try {
+        await userCollection("progress").doc(id).set({ status });
+        showMessage("学習状態をクラウドに保存しました。");
+      } catch (error) {
+        showMessage("端末には保存しましたが、クラウド同期に失敗しました。ネット接続を確認してください。");
+      }
+    }
+
+    function showResults() {
+      showScreen("resultScreen");
+      const results = session.results.filter(Boolean);
+      const correct = results.filter(r => r.ok).length;
+      document.getElementById("resultSummary").textContent =
+        results.length + "問中 " + correct + "問正解";
+      renderResults();
+    }
+
+    function renderResults() {
+      const root = document.getElementById("resultList");
+      root.replaceChildren();
+      if (!session) return;
+
+      session.results.filter(Boolean).forEach((r, i) => {
+        const row = document.createElement("div");
+        row.className = "result-item";
+        const p = document.createElement("p");
+        p.textContent = (i + 1) + ". " + r.question;
+        const result = document.createElement("p");
+        result.textContent =
+          (r.ok ? "正解" : "不正解") +
+          "（回答：" + r.chosen + "／正解：" + r.correct + "）";
+        const exp = document.createElement("p");
+        exp.textContent = "解説：" + (r.explanation || "なし");
+
+        const state = document.createElement("p");
+        state.textContent = "学習状態：" +
+          (progress[r.id] === "known" ? "覚えた" :
+           progress[r.id] === "unknown" ? "まだ覚えていない" : "未記録");
+
+        const known = document.createElement("button");
+        known.textContent = "覚えた";
+        known.onclick = () => setStatus(r.id, "known");
+        const unknown = document.createElement("button");
+        unknown.textContent = "まだ覚えていない";
+        unknown.onclick = () => setStatus(r.id, "unknown");
+
+        row.append(p, result, exp, state, known, unknown);
+        root.appendChild(row);
+      });
+    }
+
+    async function importCsv(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      try {
+        const bytes = await file.arrayBuffer();
+        let text;
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          text = new TextDecoder("shift_jis").decode(bytes);
+        }
+
+        const rows = text.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+        const start = rows[0].startsWith("問題,") ? 1 : 0;
+        const imported = [];
+
+        for (let i = start; i < rows.length; i++) {
+          const cells = rows[i].split(",");
+          const question = (cells[0] || "").replace(/^"|"$/g, "").trim();
+          const answerText = (cells[1] || "").replace(/^"|"$/g, "").trim();
+          const explanation = (cells[2] || "").replace(/^"|"$/g, "").trim();
+          const unit = (cells[3] || "").replace(/^"|"$/g, "").trim() || "未分類";
+          const answerValue = normalizeAnswer(answerText);
+
+          if (!question && !answerText) continue;
+          if (!question || !answerValue) {
+            alert((i + 1) + "行目を確認してください。A列に問題、B列に○か×を入れてください。");
+            return;
+          }
+
+          imported.push({
+            id: "q-" + Date.now() + "-" + i + "-" + Math.random().toString(16).slice(2),
+            question, answer: answerValue, explanation, unit
+          });
+        }
+
+        questions = imported;
+        progress = {};
+        saveLocal();
+
+        await replaceCloudQuestions(questions);
+        const oldProgress = await userCollection("progress").get();
+        const batch = db.batch();
+        oldProgress.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+
+        alert(imported.length + "問を読み込み、クラウドに保存しました。");
+        showMenu();
+      } catch (error) {
+        alert("読み込み／同期に失敗しました。ネット接続とFirestoreルールを確認してください。");
+      } finally {
+        event.target.value = "";
+      }
+    }
+
+    function saveLocal() {
+      localStorage.setItem("nougakkuQuestions", JSON.stringify(questions));
+      localStorage.setItem("nougakkuProgress", JSON.stringify(progress));
+    }
+
+    function downloadBackup() {
+      const data = {
+        questions: questions,
+        progress: progress,
+        createdAt: new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+      });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "kasai-anki-backup.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    async function restoreBackup(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      try {
+        const backup = JSON.parse(await file.text());
+        if (!Array.isArray(backup.questions) || !backup.progress) {
+          throw new Error("バックアップ形式が違います");
+        }
+
+        questions = backup.questions;
+        progress = backup.progress;
+        saveLocal();
+
+        await replaceCloudQuestions(questions);
+        const batch = db.batch();
+        for (const [id, status] of Object.entries(progress)) {
+          batch.set(userCollection("progress").doc(id), { status });
+        }
+        await batch.commit();
+
+        alert("バックアップを復元し、クラウドに保存しました。");
+        showMenu();
+      } catch (error) {
+        alert("バックアップを復元できませんでした。");
+      } finally {
+        event.target.value = "";
+      }
+    }
+  </script>
+</body>
+</html>
