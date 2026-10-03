@@ -106,7 +106,7 @@
         <button type="button" onclick="document.getElementById('csvFile').click()">ExcelのCSVを読み込む</button>
         <input id="csvFile" type="file" accept=".csv,text/csv" onchange="importCsv(event)">
       </div>
-      <p class="help">CSVはA列＝問題、B列＝○か×、C列＝解説、D列＝単元です。既存と同じ単元・問題は記録を引き継ぎ、新しい問題を追加します。</p>
+      <p class="help">CSVはA列＝問題、B列＝○か×、C列＝解説、D列＝単元です。すでにある問題（単元に関わらず同じ問題文）は飛ばし、新しい問題だけを追加します。</p>
     </section>
 
     <section id="listScreen" hidden>
@@ -613,13 +613,26 @@
     }
 
     function questionKey(item) {
-      const unit = String(item.unit || "未分類").trim().replace(/\s+/g, " ");
-      const question = String(item.question || "").trim().replace(/\s+/g, " ");
-      return unit + "\u0000" + question;
+      // Unicode表記と空白の違いをならし、単元が違っても同じ問題文は重複とする。
+      return String(item.question || "")
+        .normalize("NFKC")
+        .replace(/[\s　]+/g, "")
+        .trim();
     }
 
     function makeQuestionId() {
       return "q-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    }
+
+    async function addCloudQuestions(items) {
+      const collection = userCollection("questions");
+      for (let i = 0; i < items.length; i += 400) {
+        const batch = db.batch();
+        items.slice(i, i + 400).forEach(item => {
+          batch.set(collection.doc(item.id), item);
+        });
+        await batch.commit();
+      }
     }
 
     async function importCsv(event) {
@@ -658,38 +671,30 @@
           });
         }
 
-        // 同じ単元・問題なら、既存のIDを保って学習記録を引き継ぐ。
-        // CSVに含まれていない既存問題も一覧に残す。
+        // 既存の問題・ID・学習記録には触れず、未登録の問題だけを追加する。
         const merged = questions.map(q => ({ ...q, id: q.id || makeQuestionId() }));
-        const existingByKey = new Map();
-        merged.forEach((q, index) => {
-          const key = questionKey(q);
-          if (!existingByKey.has(key)) existingByKey.set(key, index);
-        });
+        const existingKeys = new Set(merged.map(questionKey));
+        const newQuestions = [];
 
-        let addedCount = 0;
-        let matchedCount = 0;
+        let skippedCount = 0;
         for (const item of imported) {
           const key = questionKey(item);
-          const existingIndex = existingByKey.get(key);
-          if (existingIndex !== undefined) {
-            const old = merged[existingIndex];
-            merged[existingIndex] = { ...item, id: old.id };
-            matchedCount++;
-          } else {
-            const newItem = { ...item, id: makeQuestionId() };
-            existingByKey.set(key, merged.length);
-            merged.push(newItem);
-            addedCount++;
+          if (!key || existingKeys.has(key)) {
+            skippedCount++;
+            continue;
           }
+          const newItem = { ...item, id: makeQuestionId() };
+          existingKeys.add(key);
+          newQuestions.push(newItem);
         }
 
-        questions = merged;
+        questions = merged.concat(newQuestions);
         saveLocal();
 
-        await replaceCloudQuestions(questions);
+        // Firestoreへは新しい問題だけ書き込み、既存問題や進捗の削除はしない。
+        await addCloudQuestions(newQuestions);
 
-        alert("CSVを読み込みました。\n新しく追加：" + addedCount + "問\n既存と一致（記録を引き継ぎ）：" + matchedCount + "問\n合計：" + questions.length + "問");
+        alert("CSVを読み込みました。\n新しく追加：" + newQuestions.length + "問\n重複のためスキップ：" + skippedCount + "問\n合計：" + questions.length + "問");
         showMenu();
       } catch (error) {
         alert("読み込み／同期に失敗しました。ネット接続とFirestoreルールを確認してください。");
