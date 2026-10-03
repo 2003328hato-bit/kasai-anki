@@ -106,7 +106,7 @@
         <button type="button" onclick="document.getElementById('csvFile').click()">ExcelのCSVを読み込む</button>
         <input id="csvFile" type="file" accept=".csv,text/csv" onchange="importCsv(event)">
       </div>
-      <p class="help">CSVはA列＝問題、B列＝○か×、C列＝解説、D列＝単元です。読み込むと問題一覧が置き換わります。</p>
+      <p class="help">CSVはA列＝問題、B列＝○か×、C列＝解説、D列＝単元です。既存と同じ単元・問題は記録を引き継ぎ、新しい問題を追加します。</p>
     </section>
 
     <section id="listScreen" hidden>
@@ -573,6 +573,55 @@
       });
     }
 
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let cell = "";
+      let quoted = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (quoted) {
+          if (ch === '"' && text[i + 1] === '"') {
+            cell += '"';
+            i++;
+          } else if (ch === '"') {
+            quoted = false;
+          } else {
+            cell += ch;
+          }
+        } else if (ch === '"') {
+          quoted = true;
+        } else if (ch === ',') {
+          row.push(cell);
+          cell = "";
+        } else if (ch === '\n') {
+          row.push(cell.replace(/\r$/, ""));
+          rows.push(row);
+          row = [];
+          cell = "";
+        } else {
+          cell += ch;
+        }
+      }
+
+      if (cell.length || row.length) {
+        row.push(cell.replace(/\r$/, ""));
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function questionKey(item) {
+      const unit = String(item.unit || "未分類").trim().replace(/\s+/g, " ");
+      const question = String(item.question || "").trim().replace(/\s+/g, " ");
+      return unit + "\u0000" + question;
+    }
+
+    function makeQuestionId() {
+      return "q-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    }
+
     async function importCsv(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -586,16 +635,16 @@
           text = new TextDecoder("shift_jis").decode(bytes);
         }
 
-        const rows = text.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
-        const start = rows[0].startsWith("問題,") ? 1 : 0;
+        const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+        const start = rows[0] && String(rows[0][0] || "").trim() === "問題" ? 1 : 0;
         const imported = [];
 
         for (let i = start; i < rows.length; i++) {
-          const cells = rows[i].split(",");
-          const question = (cells[0] || "").replace(/^"|"$/g, "").trim();
-          const answerText = (cells[1] || "").replace(/^"|"$/g, "").trim();
-          const explanation = (cells[2] || "").replace(/^"|"$/g, "").trim();
-          const unit = (cells[3] || "").replace(/^"|"$/g, "").trim() || "未分類";
+          const cells = rows[i];
+          const question = (cells[0] || "").trim();
+          const answerText = (cells[1] || "").trim();
+          const explanation = (cells[2] || "").trim();
+          const unit = (cells[3] || "").trim() || "未分類";
           const answerValue = normalizeAnswer(answerText);
 
           if (!question && !answerText) continue;
@@ -605,22 +654,42 @@
           }
 
           imported.push({
-            id: "q-" + Date.now() + "-" + i + "-" + Math.random().toString(16).slice(2),
             question, answer: answerValue, explanation, unit
           });
         }
 
-        questions = imported;
-        progress = {};
+        // 同じ単元・問題なら、既存のIDを保って学習記録を引き継ぐ。
+        // CSVに含まれていない既存問題も一覧に残す。
+        const merged = questions.map(q => ({ ...q, id: q.id || makeQuestionId() }));
+        const existingByKey = new Map();
+        merged.forEach((q, index) => {
+          const key = questionKey(q);
+          if (!existingByKey.has(key)) existingByKey.set(key, index);
+        });
+
+        let addedCount = 0;
+        let matchedCount = 0;
+        for (const item of imported) {
+          const key = questionKey(item);
+          const existingIndex = existingByKey.get(key);
+          if (existingIndex !== undefined) {
+            const old = merged[existingIndex];
+            merged[existingIndex] = { ...item, id: old.id };
+            matchedCount++;
+          } else {
+            const newItem = { ...item, id: makeQuestionId() };
+            existingByKey.set(key, merged.length);
+            merged.push(newItem);
+            addedCount++;
+          }
+        }
+
+        questions = merged;
         saveLocal();
 
         await replaceCloudQuestions(questions);
-        const oldProgress = await userCollection("progress").get();
-        const batch = db.batch();
-        oldProgress.docs.forEach(doc => batch.delete(doc.ref));
-        await batch.commit();
 
-        alert(imported.length + "問を読み込み、クラウドに保存しました。");
+        alert("CSVを読み込みました。\n新しく追加：" + addedCount + "問\n既存と一致（記録を引き継ぎ）：" + matchedCount + "問\n合計：" + questions.length + "問");
         showMenu();
       } catch (error) {
         alert("読み込み／同期に失敗しました。ネット接続とFirestoreルールを確認してください。");
